@@ -1,0 +1,328 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── AUTH ────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  profile             Profile?
+  accounts            Account[]
+  sessions            Session[]
+  organizedMatches    Match[]          @relation("MatchOrganizer")
+  matchParticipants   MatchPlayer[]
+  sentInvitations     Invitation[]     @relation("InvitationSender")
+  receivedInvitations Invitation[]     @relation("InvitationReceiver")
+  duoPrimary          Duo?             @relation("DuoPrimary")
+  duoSecondary        Duo?             @relation("DuoSecondary")
+  ratingsGiven        PlayerRating[]   @relation("RatingGiver")
+  ratingsReceived     PlayerRating[]   @relation("RatingReceiver")
+  chatMessages        ChatMessage[]
+  notifications       Notification[]
+  lookingForMatch     LookingForMatch?
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── PROFILE ─────────────────────────────────────────────────────────────────
+
+model Profile {
+  id            String        @id @default(cuid())
+  userId        String        @unique
+  bio           String?
+  city          String?
+  country       String        @default("AR")
+  avatarUrl     String?
+  skillLevel    Float         @default(1.5)
+  preferredSide PreferredSide @default(BOTH)
+  totalMatches  Int           @default(0)
+  wins          Int           @default(0)
+  losses        Int           @default(0)
+  ratingScore   Float         @default(3.0)
+  isPublic      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum PreferredSide {
+  DRIVE
+  REVES
+  BOTH
+}
+
+// ─── MATCHES ─────────────────────────────────────────────────────────────────
+
+model Match {
+  id              String      @id @default(cuid())
+  organizerId     String
+  title           String
+  description     String?
+  scheduledAt     DateTime
+  durationMinutes Int         @default(90)
+  location        String
+  latitude        Float?
+  longitude       Float?
+  city            String?
+  courtBookingUrl String?
+  skillLevelMin   Float       @default(1.0)
+  skillLevelMax   Float       @default(7.0)
+  maxPlayers      Int         @default(4)
+  currentPlayers  Int         @default(1)
+  isPrivate       Boolean     @default(false)
+  status          MatchStatus @default(OPEN)
+  format          MatchFormat @default(DOUBLES)
+  isRecurring     Boolean     @default(false)
+  recurringId     String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  organizer   User               @relation("MatchOrganizer", fields: [organizerId], references: [id])
+  players     MatchPlayer[]
+  invitations Invitation[]
+  chatRoom    ChatRoom?
+  ratings     PlayerRating[]
+  recurring   RecurringTemplate? @relation(fields: [recurringId], references: [id])
+
+  @@index([scheduledAt])
+  @@index([city])
+  @@index([status])
+}
+
+enum MatchStatus {
+  OPEN
+  FULL
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum MatchFormat {
+  DOUBLES
+  AMERICANO
+  THREE_PLAYERS
+}
+
+model MatchPlayer {
+  id       String          @id @default(cuid())
+  matchId  String
+  userId   String
+  role     MatchPlayerRole @default(PLAYER)
+  status   PlayerStatus    @default(CONFIRMED)
+  team     Int?
+  joinedAt DateTime        @default(now())
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@unique([matchId, userId])
+}
+
+enum MatchPlayerRole {
+  ORGANIZER
+  PLAYER
+}
+
+enum PlayerStatus {
+  CONFIRMED
+  WAITLIST
+  CANCELLED
+}
+
+// ─── RECURRING TEMPLATES ─────────────────────────────────────────────────────
+
+model RecurringTemplate {
+  id              String   @id @default(cuid())
+  organizerId     String
+  title           String
+  location        String
+  durationMinutes Int      @default(90)
+  skillLevelMin   Float
+  skillLevelMax   Float
+  maxPlayers      Int      @default(4)
+  cronExpression  String
+  courtBookingUrl String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  matches Match[]
+}
+
+// ─── INVITATIONS ─────────────────────────────────────────────────────────────
+
+model Invitation {
+  id         String           @id @default(cuid())
+  matchId    String
+  senderId   String
+  receiverId String
+  status     InvitationStatus @default(PENDING)
+  message    String?
+  createdAt  DateTime         @default(now())
+  expiresAt  DateTime
+
+  match    Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  sender   User  @relation("InvitationSender", fields: [senderId], references: [id])
+  receiver User  @relation("InvitationReceiver", fields: [receiverId], references: [id])
+
+  @@unique([matchId, receiverId])
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+// ─── DUO / PAREJA ────────────────────────────────────────────────────────────
+
+model Duo {
+  id             String   @id @default(cuid())
+  primaryId      String   @unique
+  secondaryId    String   @unique
+  name           String?
+  combinedRating Float    @default(3.0)
+  totalMatches   Int      @default(0)
+  wins           Int      @default(0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  primary   User @relation("DuoPrimary", fields: [primaryId], references: [id])
+  secondary User @relation("DuoSecondary", fields: [secondaryId], references: [id])
+}
+
+// ─── RATINGS ─────────────────────────────────────────────────────────────────
+
+model PlayerRating {
+  id         String   @id @default(cuid())
+  matchId    String
+  giverId    String
+  receiverId String
+  score      Int
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  match    Match @relation(fields: [matchId], references: [id])
+  giver    User  @relation("RatingGiver", fields: [giverId], references: [id])
+  receiver User  @relation("RatingReceiver", fields: [receiverId], references: [id])
+
+  @@unique([matchId, giverId, receiverId])
+}
+
+// ─── CHAT ─────────────────────────────────────────────────────────────────────
+
+model ChatRoom {
+  id        String      @id @default(cuid())
+  matchId   String      @unique
+  createdAt DateTime    @default(now())
+
+  match    Match         @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  roomId    String
+  authorId  String
+  content   String   @db.Text
+  readBy    String[]
+  createdAt DateTime @default(now())
+
+  room   ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  author User     @relation(fields: [authorId], references: [id])
+}
+
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  actionUrl String?
+  isRead    Boolean          @default(false)
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+enum NotificationType {
+  MATCH_JOINED
+  MATCH_FULL
+  MATCH_CANCELLED
+  MATCH_REMINDER
+  INVITATION_RECEIVED
+  INVITATION_ACCEPTED
+  RATING_RECEIVED
+  CHAT_MESSAGE
+  MATCH_SUGGESTION
+}
+
+// ─── LOOKING FOR MATCH ────────────────────────────────────────────────────────
+
+model LookingForMatch {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  availableFrom DateTime
+  availableTo   DateTime
+  city          String
+  skillLevelMin Float
+  skillLevelMax Float
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
